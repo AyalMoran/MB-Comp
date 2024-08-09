@@ -34,6 +34,8 @@ SimpleMBCompAudioProcessor::SimpleMBCompAudioProcessor()
     floatHelper(compressor.threshold, Names::Threshold_Low_Band);
     floatHelper(compressor.attack, Names::Attack_Low_Band);
     floatHelper(compressor.release, Names::Release_Low_Band);
+    
+    floatHelper(lowCrossover, Names::Low_Mid_Crossover_Freq);
 
 
     auto choiceHelper = [&apvts = this->apvts, &params](auto& param, const auto& paramName)
@@ -129,7 +131,14 @@ void SimpleMBCompAudioProcessor::prepareToPlay (double sampleRate, int samplesPe
     spec.numChannels = getTotalNumOutputChannels(); 
     spec.sampleRate = sampleRate;
 
-    compressor.prepare(spec);
+compressor.prepare(spec);
+LPF.prepare(spec);
+HPF.prepare(spec);
+
+for (auto& buffer : filterBuffers)
+{
+    buffer.setSize(spec.numChannels, samplesPerBlock);
+}
 }
 
 void SimpleMBCompAudioProcessor::releaseResources()
@@ -139,35 +148,35 @@ void SimpleMBCompAudioProcessor::releaseResources()
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
-bool SimpleMBCompAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool SimpleMBCompAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
-  #if JucePlugin_IsMidiEffect
-    juce::ignoreUnused (layouts);
+#if JucePlugin_IsMidiEffect
+    juce::ignoreUnused(layouts);
     return true;
-  #else
+#else
     // This is the place where you check if the layout is supported.
     // In this template code we only support mono or stereo.
     // Some plugin hosts, such as certain GarageBand versions, will only
     // load plugins that support stereo bus layouts.
     if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono()
-     && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+        && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
         return false;
 
     // This checks if the input layout matches the output layout
-   #if ! JucePlugin_IsSynth
+#if ! JucePlugin_IsSynth
     if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
         return false;
-   #endif
+#endif
 
     return true;
-  #endif
+#endif
 }
 #endif
 
-void SimpleMBCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+void SimpleMBCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
-    auto totalNumInputChannels  = getTotalNumInputChannels();
+    auto totalNumInputChannels = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
     // In case we have more outputs than inputs, this code clears any output
@@ -192,8 +201,42 @@ void SimpleMBCompAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     compressor.process(context);*/
 
-    compressor.updateCompressorSettings();
-    compressor.process(buffer);
+    //compressor.updateCompressorSettings();
+    //compressor.process(buffer);
+
+    for (auto& fb : filterBuffers)
+    {
+        fb = buffer;
+    }
+
+    auto cutoff = lowCrossover->get();
+    LPF.setCutoffFrequency(cutoff);
+    HPF.setCutoffFrequency(cutoff);
+
+    auto fb0Block = juce::dsp::AudioBlock<float>(filterBuffers[0]);
+    auto fb1Block = juce::dsp::AudioBlock<float>(filterBuffers[1]);
+
+    auto fb0Ctx = juce::dsp::ProcessContextReplacing<float>(fb0Block);
+    auto fb1Ctx = juce::dsp::ProcessContextReplacing<float>(fb1Block);
+
+    LPF.process(fb0Ctx);
+    HPF.process(fb1Ctx);
+
+    auto numSamples = buffer.getNumSamples();
+    auto numChannels = buffer.getNumChannels();
+
+    buffer.clear();
+
+    auto addFilterBand = [nc = numChannels, ns = numSamples](auto& inputBuffer, const auto& source)
+    {
+        for (auto i = 0; i < nc; ++i)
+        {
+            inputBuffer.addFrom(i, 0, source, i, 0, ns);
+        }
+    };
+
+    addFilterBand(buffer, filterBuffers[0]);
+    addFilterBand(buffer, filterBuffers[1]);    
 }
 
 //==============================================================================
@@ -250,10 +293,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SimpleMBCompAudioProcessor::
 
     auto attackReleaseRange = NormalisableRange<float>(5, 500, 1, 1);
 
-    layout.add(std::make_unique<AudioParameterFloat>(params.at(Names::Attack_Low_Band), params.at(Names::Attack_Low_Band),
+    layout.add(std::make_unique<AudioParameterFloat>(params.at(Names::Attack_Low_Band), 
+                                                     params.at(Names::Attack_Low_Band),
                                                      attackReleaseRange, 50));
-    layout.add(std::make_unique<AudioParameterFloat>(params.at(Names::Release_Low_Band), params.at(Names::Release_Low_Band),
-                                                       attackReleaseRange, 250));
+
+    layout.add(std::make_unique<AudioParameterFloat>(params.at(Names::Release_Low_Band), 
+                                                     params.at(Names::Release_Low_Band),
+                                                     attackReleaseRange, 250));
 
     auto choices = std::vector<double>{ 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 10, 15, 20, 50, 100 };
     juce::StringArray sa;
@@ -262,12 +308,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout SimpleMBCompAudioProcessor::
         sa.add(juce::String(choice, 1));
     }
 
-    layout.add(std::make_unique<AudioParameterChoice>(params.at(Names::Ratio_Low_Band), params.at(Names::Ratio_Low_Band),
+    layout.add(std::make_unique<AudioParameterChoice>(params.at(Names::Ratio_Low_Band), 
+                                                      params.at(Names::Ratio_Low_Band),
                                                       sa, 3));
 
-    layout.add(std::make_unique<AudioParameterBool>(params.at(Names::Bypass_Low_Band), params.at(Names::Bypass_Low_Band),
+    layout.add(std::make_unique<AudioParameterBool>(params.at(Names::Bypass_Low_Band),
+                                                    params.at(Names::Bypass_Low_Band),
                                                     false));
 
+    layout.add(std::make_unique<AudioParameterFloat>(params.at(Names::Low_Mid_Crossover_Freq), 
+                                                     params.at(Names::Low_Mid_Crossover_Freq),
+													 NormalisableRange<float>(20, 20000, 1, 1), 500));
     return layout;
 }
 //==============================================================================
