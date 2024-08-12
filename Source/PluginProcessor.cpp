@@ -67,6 +67,14 @@ SimpleMBCompAudioProcessor::SimpleMBCompAudioProcessor()
     boolHelper(midBandComp.bypass, Names::Bypass_Mid_Band);
     boolHelper(highBandComp.bypass, Names::Bypass_High_Band);
 
+    boolHelper(lowBandComp.mute, Names::Mute_Low_Band);
+    boolHelper(midBandComp.mute, Names::Mute_Mid_Band);
+    boolHelper(highBandComp.mute, Names::Mute_High_Band);
+
+    boolHelper(lowBandComp.solo, Names::Solo_Low_Band);
+    boolHelper(midBandComp.solo, Names::Solo_Mid_Band);
+    boolHelper(highBandComp.solo, Names::Solo_High_Band);
+
     LP1.setType(juce::dsp::LinkwitzRileyFilterType::lowpass);
     HP1.setType(juce::dsp::LinkwitzRileyFilterType::highpass);
 
@@ -311,6 +319,8 @@ void SimpleMBCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
 
     buffer.clear();
 
+  
+
     auto addFilterBand = [nc = numChannels, ns = numSamples](auto& inputBuffer, const auto& source)
     {
         for (auto i = 0; i < nc; ++i)
@@ -329,9 +339,43 @@ void SimpleMBCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
         addFilterBand(buffer, apBuffer);
     }*/
 
-    addFilterBand(buffer, filterBuffers[0]);
+    auto bandsAreSoloed = false;
+    for (auto& comp : compressors)
+	{
+		if (comp.solo->get())
+		{
+			bandsAreSoloed = true;
+			break;
+		}
+	}
+
+    /*addFilterBand(buffer, filterBuffers[0]);
     addFilterBand(buffer, filterBuffers[1]);
-    addFilterBand(buffer, filterBuffers[2]);
+    addFilterBand(buffer, filterBuffers[2]);*/
+
+    if (bandsAreSoloed)
+    {
+        for (size_t i = 0; i < compressors.size(); ++i)
+        {
+            auto& comp = compressors[i];
+            if (comp.solo->get())
+            {
+                addFilterBand(buffer, filterBuffers[i]);
+            }
+        }
+    }
+    else
+    {
+        for (size_t i = 0;  i < compressors.size(); ++i)
+		{
+			auto& comp = compressors[i];
+			if ( !comp.mute->get())
+			{
+				addFilterBand(buffer, filterBuffers[i]);
+			}
+		}
+	}
+
 
   //  if (compressor.bypass->get()) {
   //      for( auto ch = 0; ch <numChannels; ++ch)
@@ -455,7 +499,26 @@ juce::AudioProcessorValueTreeState::ParameterLayout SimpleMBCompAudioProcessor::
     layout.add(std::make_unique<AudioParameterBool>(params.at(Names::Bypass_High_Band),
                                                     params.at(Names::Bypass_High_Band),
                                                     false));
-
+    //Mute
+    layout.add(std::make_unique<AudioParameterBool>(params.at(Names::Mute_Low_Band),
+                                                    params.at(Names::Mute_Low_Band),
+                                                    false));         
+    layout.add(std::make_unique<AudioParameterBool>(params.at(Names::Mute_Mid_Band),
+                                                    params.at(Names::Mute_Mid_Band),
+                                                    false));         
+    layout.add(std::make_unique<AudioParameterBool>(params.at(Names::Mute_High_Band),
+                                                    params.at(Names::Mute_High_Band),
+                                                    false));
+    //Solo
+    layout.add(std::make_unique<AudioParameterBool>(params.at(Names::Solo_Low_Band),
+													params.at(Names::Solo_Low_Band),
+													false));
+    layout.add(std::make_unique<AudioParameterBool>(params.at(Names::Solo_Mid_Band),
+                                                    params.at(Names::Solo_Mid_Band),
+													false));
+    layout.add(std::make_unique<AudioParameterBool>(params.at(Names::Solo_High_Band),
+                                                    params.at(Names::Solo_High_Band),
+													false));
     //Frequency
     layout.add(std::make_unique<AudioParameterFloat>(params.at(Names::Low_Mid_Crossover_Freq), 
                                                      params.at(Names::Low_Mid_Crossover_Freq),
@@ -464,6 +527,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SimpleMBCompAudioProcessor::
     layout.add(std::make_unique<AudioParameterFloat>(params.at(Names::Mid_High_Crossover_Freq),
                                                      params.at(Names::Mid_High_Crossover_Freq),
                                                      NormalisableRange<float>(1000, 20000, 1, 1), 2000));
+
 
     return layout;
 }
