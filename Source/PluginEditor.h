@@ -12,6 +12,16 @@
 #include "PluginProcessor.h"
 
 //==============================================================================
+struct Placeholder : public juce::Component
+{
+    Placeholder();
+
+	void paint (juce::Graphics& g) override
+	{
+		g.fillAll (customColour);
+	}
+    juce::Colour customColour;
+};
 /**
 */
 class SimpleMBCompAudioProcessorEditor  : public juce::AudioProcessorEditor
@@ -28,6 +38,8 @@ private:
     // This reference is provided as a quick way for your editor to
     // access the processor object that created it.
     SimpleMBCompAudioProcessor& audioProcessor;
+
+    Placeholder controlBar, analyzer, globalControls, bandControls;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SimpleMBCompAudioProcessorEditor)
 };
